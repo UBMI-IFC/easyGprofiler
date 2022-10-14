@@ -28,6 +28,7 @@ def args():
     	help="""If specified, returns the under represented terms (isntead of the over represented) """)
     return parser.parse_args()
 
+
 def gprofiler(namelist, organism, user_threshold=0.05, method='g_SCS',
               measure_underrepresentation=False, background=None,
               simple_out=0):
@@ -48,14 +49,31 @@ def gprofiler(namelist, organism, user_threshold=0.05, method='g_SCS',
             'query': namelist,
             'user_threshold': user_threshold,
             'measure_underrepresentation': measure_underrepresentation,
-               }
+            'significance_threshold_method': method,
+               },
+        timeout=10
                     )
     df = pd.DataFrame(r.json()['result'])
+    # failed genes
+    failed = r.json()['meta']['genes_metadata']['failed']
+    # succes genes
+    genesdict = r.json()['meta']['genes_metadata']['query']['query_1']['mapping']
+    ensdict = {v[0]: id_ for id_, v in genesdict.items()}
+    enslist = r.json()['meta']['genes_metadata']['query']['query_1']['ensgs']
+    geneslist = [ensdict[ens] for ens in enslist]
+    # dataframe of genes and onthologies
+    genesdf = pd.DataFrame(0, index=df['native'], columns=geneslist)
+    for i in range(len(df)):
+        intersections = df['intersections'][i]
+        for j, int_ in enumerate(intersections):
+            if int_:            # only not empty values are relevant
+                genesdf.iloc[i, j] = 1
+
     # manually selecting and sorting output
     cols = ['source', 'native', 'name', 'p_value', 'description', 'query',
-            'significant']
-    extend = ['term_size', 'query_size', 'intersection_size',
-              'effective_domain_size', 'intersections', 'parents']
+            'significant', 'term_size', 'intersection_size']
+    extend = ['query_size', 'effective_domain_size',
+              'intersections', 'parents']
     # Unkown columns, there is no direct explanation.
     wtf_cols = ['goshv', 'group_id', 'precision', 'recall',
                 'source_order']
@@ -66,65 +84,65 @@ def gprofiler(namelist, organism, user_threshold=0.05, method='g_SCS',
         df = df[cols + extend]
     elif simple_out == 2:
         df = df[cols + extend + wtf_cols]
-    return df
+    return df, genesdf, failed
 
 
-args = args()
+if __name__ == '__main__':
+    args = args()
 
-if args.output == None:
-	args.output = args.infile + '.gprofiler'
+    if args.output == None:
+    	args.output = args.infile + '.gprofiler'
 
-query = []
+    query = []
 
-with open(args.infile) as inf:
-	for line in inf:
-		query.append(line.strip())
+    with open(args.infile) as inf:
+    	for line in inf:
+    		query.append(line.strip())
 
-print('Arguments')
-print(args)
+    print('Arguments')
+    print(args)
 
-result = gprofiler(query, args.organism,
-	user_threshold=args.threshold,
-	method=args.method,
-	measure_underrepresentation=args.underrepresented)
-
-result.to_csv(args.output, sep='\t')
-
-
-print('Some plots')
-sources = result.source.unique()
-
-result = result.set_index('name')
-
-for source in sources:
-    subdf = (-log10(result[result.source == source].p_value))
-    subdf = subdf.iloc[:10]
-    y = 0.2 * len(subdf)
-    plt.figure(figsize=(5,y))
-    # subdf.plot.barh(color=source_colors[source])
-    subdf.plot.barh()
-    plt.gca().invert_yaxis()
-    plt.xlabel('-log10(p-value)')
-    plt.title(source)
-    plt.savefig(args.output + source + '.svg')
+    result, genes, failed = gprofiler(query, args.organism,
+                                      user_threshold=args.threshold,
+                                      method=args.method,
+                                      measure_underrepresentation=args.underrepresented,
+                                      simple_out=0)
+    # save results
+    result.to_csv(args.output, sep='\t')
+    genes.to_csv(args.output + '.genes', sep='\t')
+    with open(args.output + '.failed', 'w') as outf:
+        outf.write('\n'.join(failed))
 
 
-print('[DONE] Be happy!!!')
+    print('Some plots')
+    sources = result.source.unique()
 
-# # get profile
-# genes = []
-# organism = 'mmusculus'
-# profile = gprofiler(genes, organism)
+    result = result.set_index('name')
+
+    for source in sources:
+        subdf = (-log10(result[result.source == source].p_value))
+        subdf = subdf.iloc[:10]
+        y = 0.2 * len(subdf)
+        plt.figure(figsize=(5,y))
+        # subdf.plot.barh(color=source_colors[source])
+        subdf.plot.barh()
+        plt.gca().invert_yaxis()
+        plt.xlabel('-log10(p-value)')
+        plt.title(source)
+        plt.savefig(args.output + source + '.svg')
 
 
-# # Total terms detected for all sources
-# print('Total detected p-val <= 0.05:')
-# print(f'{len(golargest)}')
+    print('[DONE] Be happy!!!')
 
-# # number of terms detected for each source
-# print('\nDetected by source: ')
-# print(golargest.source.value_counts())
-
-
-# # plot top 10 pval for each source
-# # source = 'GO:MF'
+    # # get profile
+    # genes = []
+    # organism = 'mmusculus'
+    # profile = gprofiler(genes, organism)
+    # # Total terms detected for all sources
+    # print('Total detected p-val <= 0.05:')
+    # print(f'{len(golargest)}')
+    # # number of terms detected for each source
+    # print('\nDetected by source: ')
+    # print(golargest.source.value_counts())
+    # # plot top 10 pval for each source
+    # # source = 'GO:MF'
